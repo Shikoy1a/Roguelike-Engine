@@ -20,9 +20,12 @@ int main() {
         game.render();
         char command = get_input();
         game.handleInput(command, running);
+
         if (running) {
-            game.updateMonsters();
+            game.updateMonsters(running);
         }
+
+        
     }
 
     std::cout << "Game over!" << std::endl;
