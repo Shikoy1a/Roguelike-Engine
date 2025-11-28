@@ -50,7 +50,7 @@ void try_move_entity(Entity& e,
 int find_monster_at(const std::vector<Entity>& entities, int x, int y) {
     for (std::size_t i = 1; i < entities.size(); ++i) { // 0 是玩家
         const auto& e = entities[i];
-        if (!e.isPlayer && e.x == x && e.y == y && e.hp > 0) {
+        if (e.type == EntityType::Monster && e.x == x && e.y == y && e.hp > 0) {
             return static_cast<int>(i);
         }
     }

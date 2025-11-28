@@ -21,8 +21,9 @@ static const char* COLOR_WALL    = "\x1b[37m"; // 白
 static const char* COLOR_FLOOR   = "\x1b[90m"; // 暗灰
 static const char* COLOR_PLAYER  = "\x1b[32m"; // 绿
 static const char* COLOR_MONSTER = "\x1b[31m"; // 红
-static const char* COLOR_CORPSE  = "\x1b[35m"; // 紫
+static const char* COLOR_CORPSE  = "\x1b[35m"; // 紫    
 static const char* COLOR_DARK    = "\x1b[90m"; // 暗灰
+static const char* COLOR_ITEM    = "\033[33m"; // 黄色
 
 // ------- 一个简单的矩形房间结构，用于地牢生成 -------
 
@@ -161,6 +162,7 @@ void Game::generateDungeon() {
 
     // 创建玩家和怪物
     entities.clear();
+    inventory.clear();
 
     if (!rooms.empty()) {
         // 玩家在第一个房间中心
@@ -173,7 +175,7 @@ void Game::generateDungeon() {
         player.y = py;
         player.glyph    = '@';
         player.blocks   = true;
-        player.isPlayer = true;
+        player.type = EntityType::Player;
         player.maxHp    = 30;
         player.hp       = 30;
         player.attack   = 6;
@@ -190,11 +192,23 @@ void Game::generateDungeon() {
             m.y = my;
             m.glyph    = (i % 2 == 0) ? 'g' : 'o';
             m.blocks   = true;
-            m.isPlayer = false;
+            m.type = EntityType::Monster;
             m.maxHp    = 12;
             m.hp       = 12;
             m.attack   = 4;
             entities.push_back(m);
+
+            Entity potion;
+            potion.x = mx + 1;
+            potion.y = my + 1;
+            potion.glyph = '!';
+            potion.blocks = false;
+            potion.type = EntityType::Item;
+            potion.maxHp = 0;
+            potion.hp = 0;
+            potion.attack = 0;
+            potion.healAmount = 10;
+            entities.push_back(potion);
         }
     }
 
@@ -286,7 +300,7 @@ void Game::render() const {
 
             if (isVisible) {
                 for (const auto& e : entities) {
-                    if (e.hp > 0 && e.x == x && e.y == y) {
+                    if (e.x == x && e.y == y) {
                         entToDraw = &e;
                         break;
                     }
@@ -298,9 +312,18 @@ void Game::render() const {
             if (!isVisible) {
                 color = COLOR_DARK;
             } else if (entToDraw) {
-                if (entToDraw->isPlayer)      color = COLOR_PLAYER;
-                else if (entToDraw->hp <= 0)  color = COLOR_CORPSE;
-                else                          color = COLOR_MONSTER;
+                switch (entToDraw -> type) {
+                    case EntityType::Player:
+                        color = COLOR_PLAYER;
+                        break;
+                    case EntityType::Monster:
+                        if (entToDraw->hp > 0) color = COLOR_MONSTER;
+                        else color = COLOR_CORPSE;
+                        break;
+                    case EntityType::Item:
+                        color = COLOR_ITEM;
+                        break;
+                }
                 drawCh = entToDraw->glyph;
             } else {
                 if (baseTile == '#') color = COLOR_WALL;
@@ -317,6 +340,12 @@ void Game::render() const {
         const Entity& player = entities[0];
         std::cout << "HP: " << player.hp << " / " << player.maxHp << "\n";
     }
+
+    int potionCount = 0;
+    for (const auto& item : inventory) {
+        potionCount += item.healAmount > 0 ? 1 : 0;
+    }
+    std::cout << "Potions in inventory: " << potionCount << "\n";
 
     // 日志输出
     std::cout << "---- Log ----\n";
@@ -341,44 +370,23 @@ void Game::handleInput(char command, bool& running) {
     else if (command == 's') dy = 1;
     else if (command == 'a') dx = -1;
     else if (command == 'd') dx = 1;
+    else if (command == 'g') {
+        pickUp();
+    }
+    else if (command == 'u') {
+        useFirstItem();
+    }
     else if (command == 'q') {
         running = false;
         return;
-    } else {
-        // 其他按键忽略
-        return;
-    }
+    } 
 
-    if (dx == 0 && dy == 0) return;
+    if (!running) return;
 
-    int targetX = player.x + dx;
-    int targetY = player.y + dy;
-
-    int monsterIndex = find_monster_at(entities, targetX, targetY);
-    if (monsterIndex != -1) {
-        // 攻击怪物
-        Entity& m = entities[monsterIndex];
-        m.hp -= player.attack;
-
-        addLog("You hit " + std::string(1, m.glyph) +
-               " for " + std::to_string(player.attack) +
-               " damage (HP=" + std::to_string(m.hp) + ")");
-
-        if (m.hp <= 0) {
-            addLog(std::string("Monster ") + m.glyph + " dies!");
-            m.blocks = false;
-            m.glyph  = 'x'; // 尸体
-        }
-    } else {
-        // 没有怪物，就尝试移动
-        try_move_entity(player, map, entities, dx, dy);
-    }
-
-    // 玩家走完之后，重算一次视野
-    updateFov();
+    stepPlayerMove(dx, dy, running);
 }
 
-// 怪物 AI：朝玩家靠近，如果要走到玩家位置就攻击
+// 怪物朝玩家靠近，如果要走到玩家位置就攻击
 void Game::updateMonsters(bool& running) {
     Entity& player = entities[0];
 
@@ -415,12 +423,92 @@ void Game::updateMonsters(bool& running) {
                 try_move_entity(monster, map, entities, dx, dy);
             }
         } else {
-            // 没有路径（被墙完全隔开），可以退回到原来的“贪心靠近”或者原地不动
-            // 这里我让怪物原地不动，你也可以改成简单追踪逻辑
-            // （例如你之前的那套 dx/dy = sign(player - monster)）
+            //
+            //
         }
     }
 
     // 怪物行动后重新计算视野
     updateFov();
+}
+
+//单独封装移动命令
+void Game::stepPlayerMove(int dx, int dy, bool& running) {
+    Entity & player = entities[0];
+
+    if (dx == 0 && dy == 0) return;
+
+    int targetX = player.x + dx;
+    int targetY = player.y + dy;
+
+    int monsterIndex = find_monster_at(entities, targetX, targetY);
+    if (monsterIndex != -1) {
+        // 攻击怪物
+        Entity& m = entities[monsterIndex];
+        m.hp -= player.attack;
+
+        addLog("You hit " + std::string(1, m.glyph) +
+               " for " + std::to_string(player.attack) +
+               " damage (HP=" + std::to_string(m.hp) + ")");
+
+        if (m.hp <= 0) {
+            addLog(std::string("Monster ") + m.glyph + " dies!");
+            m.blocks = false;
+            m.glyph  = 'x'; // 尸体
+        }
+    } else {
+        // 没有怪物，就尝试移动
+        try_move_entity(player, map, entities, dx, dy);
+    }
+
+    updateFov();
+}
+
+void Game::pickUp() {
+    Entity& player = entities[0];
+
+    for (std::size_t i = 1; i < entities.size(); ++ i) {
+        Entity & e = entities[i];
+
+        if (e.type == EntityType::Item && e.x == player.x && e.y == player.y) {
+            InventoryItem item;
+
+            item.name = "Healing Potion";
+            item.healAmount = e.healAmount;
+
+            inventory.push_back(item);
+
+            addLog("You pick up a " + item.name + "!");
+
+            entities.erase(entities.begin() + static_cast<long>(i));
+            return;
+        }
+    }
+
+    addLog("There is nothing to pick up here.");
+}
+
+void Game::useFirstItem() {
+    if (inventory.empty()) {
+        addLog("Your inventory is empty.");
+        return;
+    }
+
+    InventoryItem item = inventory.front();
+    inventory.erase(inventory.begin());
+
+    Entity& player = entities[0];
+    int oldHp = player.hp;
+
+    player.hp += item.healAmount;
+
+    if (player.hp > player.maxHp) {
+        player.hp = player.maxHp;
+    }
+
+    int healed = player.hp - oldHp;
+
+    addLog("You use a " + item.name +
+           ", restoring " + std::to_string(healed) + " HP! "
+           "(HP = " + std::to_string(player.hp) + ")");
 }

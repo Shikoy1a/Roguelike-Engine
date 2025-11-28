@@ -2,17 +2,26 @@
 #include <vector>
 #include <string>
 
+enum class EntityType {
+    Player,
+    Monster,
+    Item
+};
+
 // 游戏里的实体：玩家、怪物、尸体等
 struct Entity {
     int x;
     int y;
     char glyph;   // 显示用字符，比如 '@', 'g', 'x'
     bool blocks;  // 是否阻挡（活着的怪物和玩家阻挡，尸体可以不阻挡）
-    bool isPlayer;
+    
+    EntityType type;
 
     int hp;
     int maxHp;
     int attack;
+
+    int healAmount;
 };
 
 // 地图/位置相关工具函数声明
